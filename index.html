@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Controle de Baixas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #003C41;
+      margin: 0;
+      padding: 40px 10px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      background-color: #fff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 800px;
+    }
+    h1, h2 {
+      text-align: center;
+      color: #003C41;
+    }
+    label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 5px;
+    }
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+    }
+    .dropdown {
+      border: 1px solid #ccc;
+      border-top: none;
+      max-height: 150px;
+      overflow-y: auto;
+      position: absolute;
+      width: calc(100% - 22px);
+      background-color: white;
+      z-index: 1000;
+      display: none;
+    }
+    .dropdown div {
+      padding: 8px;
+      cursor: pointer;
+    }
+    .dropdown div:hover {
+      background-color: #f0f0f0;
+    }
+    button {
+      background-color: #005A4B;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 10px;
+    }
+    button:hover {
+      background-color: #003C41;
+    }
+    .btn-danger {
+      background-color: #B00020;
+    }
+    .btn-danger:hover {
+      background-color: #7a0016;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #000;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #d3d3d3;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    ul {
+      list-style: none;
+      padding-left: 0;
+      max-height: 200px;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+    .info {
+      font-size: 14px;
+      color: #000;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Controle de Baixas (Dom‑Sáb)</h1>
+
+    <label for="cammSelect">Selecione CAMM</label>
+    <select id="cammSelect">
+      <option value="01">CAMM 01</option>
+      <option value="02">CAMM 02</option>
+    </select>
+
+    <label for="productInput">Produto</label>
+    <div style="position: relative;">
+      <input id="productInput" type="text" placeholder="Codigo (MAN-****) ou parte da descricao…">
+      <div id="suggestions" class="dropdown"></div>
+    </div>
+    <p id="selectedInfo" class="info" style="display: none;"></p>
+
+    <label for="qtyInput">Quantidade</label>
+    <input id="qtyInput" type="number" min="1" value="1">
+
+    <button id="addBtn">Adicionar</button>
+
+    <h2>Retiradas de Hoje (<span id="todayStr"></span>)</h2>
+    <ul id="todayList"></ul>
+
+    <h2>Resumo da Semana (<span id="periodStr"></span>)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Codigo</th>
+          <th>Descricao</th>
+          <th>Localizacao</th>
+          <th>Baixa</th>
+        </tr>
+      </thead>
+      <tbody id="weekTableBody"></tbody>
+    </table>
+
+    <button id="csvBtn">Gerar XLSX da Semana</button>
+    <button id="clearBtn" class="btn-danger">Limpar Semana</button>
+  </div>
+
+  <script>
+    const fmtDate = d => d.toISOString().slice(0,10);
+    const weekStart = date => { const d = new Date(date); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d; };
+    const load = () => JSON.parse(localStorage.getItem('withdrawals') || '[]');
+    const save = data => localStorage.setItem('withdrawals', JSON.stringify(data));
+
+    let items = [];
+    let selectedItem = null;
+    let selectedCamm = "01";
+    const withdrawals = load();
+    const today = new Date();
+    const start = weekStart(today);
+    const end = new Date(start); end.setDate(start.getDate() + 6);
+
+    const $ = id => document.getElementById(id);
+    const productInput = $('productInput');
+    const qtyInput = $('qtyInput');
+    const selectedInfo = $('selectedInfo');
+    const suggestions = $('suggestions');
+    const todayList = $('todayList');
+    const todayStr = $('todayStr');
+    const periodStr = $('periodStr');
+    const weekTableBody = $('weekTableBody');
+    const csvBtn = $('csvBtn');
+    const clearBtn = $('clearBtn');
+
+    function loadItems() {
+      const file = selectedCamm === "01" ? "Planilha Site 01.json" : "baixas.json";
+      fetch(file)
+        .then(r => r.json())
+        .then(data => {
+          items = data.map(it => ({
+            code: it["Número do item"],
+            description: it["Nome do produto"],
+            location: it["Localização"] || "N/A",
+            stock: it["Quantidade física disponível"]
+          }));
+        });
+    }
+
+    $('cammSelect').addEventListener('change', (e) => {
+      selectedCamm = e.target.value;
+      loadItems();
+    });
+
+    loadItems(); // carrega inicial
+
+    productInput.addEventListener('input', () => {
+      const q = productInput.value.toLowerCase();
+      suggestions.innerHTML = '';
+      if (!q) return suggestions.style.display = 'none';
+      const matches = items.filter(it =>
+        it.code?.toLowerCase().includes(q) ||
+        it.description?.toLowerCase().includes(q)
+      ).slice(0, 10);
+
+      matches.forEach(it => {
+        const div = document.createElement('div');
+        div.textContent = `${it.code} - ${it.description}`;
+        div.onclick = () => {
+          selectedItem = it;
+          productInput.value = it.code;
+          suggestions.style.display = 'none';
+          selectedInfo.textContent = `${it.description} — Localizacao: ${it.location}`;
+          selectedInfo.style.display = 'block';
+        };
+        suggestions.appendChild(div);
+      });
+      suggestions.style.display = matches.length ? 'block' : 'none';
+    });
+
+    $('addBtn').addEventListener('click', () => {
+      const qty = parseInt(qtyInput.value);
+      if (!selectedItem || !qty || qty <= 0) return;
+      withdrawals.push({ code: selectedItem.code, desc: selectedItem.description, location: selectedItem.location, qty, date: Date.now() });
+      save(withdrawals);
+      selectedItem = null;
+      productInput.value = '';
+      qtyInput.value = 1;
+      selectedInfo.style.display = 'none';
+      render();
+    });
+
+    function render() {
+      todayStr.textContent = fmtDate(today);
+      todayList.innerHTML = '';
+      const todayEntries = withdrawals.filter(w => fmtDate(new Date(w.date)) === fmtDate(today));
+      todayList.innerHTML = todayEntries.length
+        ? todayEntries.map(w => `<li>${w.qty}× ${w.desc} (${w.code})</li>`).join('')
+        : '<li>Nenhuma retirada hoje.</li>';
+
+      periodStr.textContent = `${fmtDate(start)} → ${fmtDate(end)}`;
+      const weekEntries = withdrawals.filter(w => new Date(w.date) >= start && new Date(w.date) <= end);
+      const totals = {};
+      weekEntries.forEach(w => {
+        if (!totals[w.code]) totals[w.code] = { desc: w.desc, location: w.location, qty: 0 };
+        totals[w.code].qty += w.qty;
+      });
+
+      const codes = Object.keys(totals);
+      weekTableBody.innerHTML = codes.length
+        ? codes.map(code => `
+            <tr>
+              <td>${code}</td>
+              <td>${totals[code].desc}</td>
+              <td>${totals[code].location}</td>
+              <td>
+                <input type="number" min="0" value="${totals[code].qty}" 
+                       data-code="${code}" style="width:60px;">
+              </td>
+            </tr>
+          `).join('')
+        : '<tr><td colspan="4" style="text-align:center;">Nenhuma baixa esta semana.</td></tr>';
+
+      document.querySelectorAll('#weekTableBody input').forEach(input => {
+        input.addEventListener('change', e => {
+          const code = e.target.dataset.code;
+          const newQty = parseInt(e.target.value);
+
+          for (let i = withdrawals.length - 1; i >= 0; i--) {
+            if (withdrawals[i].code === code &&
+                new Date(withdrawals[i].date) >= start &&
+                new Date(withdrawals[i].date) <= end) {
+              withdrawals.splice(i, 1);
+            }
+          }
+
+          if (newQty > 0) {
+            withdrawals.push({ code, desc: totals[code].desc, location: totals[code].location, qty: newQty, date: Date.now() });
+          }
+
+          save(withdrawals);
+          render();
+        });
+      });
+
+      csvBtn.disabled = !codes.length;
+      clearBtn.disabled = !codes.length;
+    }
+
+    csvBtn.addEventListener('click', () => {
+      const weekEntries = withdrawals.filter(w => new Date(w.date) >= start && new Date(w.date) <= end);
+      const totals = {};
+      weekEntries.forEach(w => {
+        if (!totals[w.code]) totals[w.code] = { desc: w.desc, location: w.location, qty: 0 };
+        totals[w.code].qty += w.qty;
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws_data = [
+        ['DIA','NÚMERO DO ITEM','NOME DO PRODUTO','SITE','DEPÓSITO','QUANTIDADE','QUANTIDADE DE UNIDADES','LOCALIZAÇÃO'],
+        ...Object.entries(totals).map(([code, val]) => {
+          let site = "";
+          let deposito = "";
+          if (selectedCamm === "01") {
+            site = "TB01";
+            deposito = "MANTCWB1";
+          } else if (selectedCamm === "02") {
+            site = "BIOPRCWB03";
+            deposito = "MANTCWB2";
+          }
+          return [
+            fmtDate(today),
+            code,
+            val.desc,
+            site,
+            deposito,
+            `-${val.qty}`,
+            `-${val.qty}`,
+            val.location
+          ];
+        })
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(ws_data);
+      XLSX.utils.book_append_sheet(wb, ws, 'BAIXAS');
+      XLSX.writeFile(wb, `BAIXAS_${fmtDate(start)}_A_${fmtDate(end)}.xlsx`);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      const rest = withdrawals.filter(w => new Date(w.date) < start);
+      localStorage.setItem('withdrawals', JSON.stringify(rest));
+      withdrawals.length = 0;
+      withdrawals.push(...rest);
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>
